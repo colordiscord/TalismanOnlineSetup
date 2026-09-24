@@ -304,7 +304,7 @@ ok "Docker is running"
 # ----------------------------------------------------------------------------
 step "Creating folders, settings and passwords..."
 # ----------------------------------------------------------------------------
-mkdir -p "$BASE"/{server,lib,sql,backup,logs,run}
+mkdir -p "$BASE"/{server,lib,sql,backup,logs,run} "$BASE"/server/{db_server,login_server,game_server}
 chmod 700 "$BASE"
 chmod 755 "$BASE"/{server,lib,sql,backup,logs,run}
 
@@ -738,7 +738,7 @@ start_role() {
   bin="$(find_binary "$role")"
   if [[ -z "$bin" ]]; then
     bad "$label: program not found."
-    hint "Upload your server files into $BASE/server (see: talisman help upload)."
+    hint "Upload it into $BASE/server/${role}_server/ (Bitvise: New SFTP window)."
     local names_var="${role^^}_SERVER_NAMES"
     hint "Looked for file names: ${!names_var}"
     hint "If yours has another name, set ${role^^}_SERVER_BIN=/full/path in $CONF_FILE"
@@ -1269,7 +1269,7 @@ cmd_info() {
   load_env 2>/dev/null || true
   cat <<EOF
 ${C_B}Where things are${C_0}
-  Server files  : $BASE/server   (upload your db/login/game server folders here)
+  Server files  : $BASE/server/db_server  /login_server  /game_server
   SQL dumps     : $BASE/sql
   Extra libs    : $BASE/lib       (.so files the programs need)
   Logs          : $LOGS
@@ -1546,12 +1546,14 @@ TALISMAN ONLINE SERVER  (setup v$SETUP_VERSION)
 
 Type "talisman help" to see every command.
 
-1. Upload your server files (FileZilla / WinSCP, SFTP, user root) into:
-     $BASE/server
+1. Upload your server files (Bitvise SSH Client -> New SFTP window, user root):
+     db_server folder contents    -> $BASE/server/db_server/
+     login_server folder contents -> $BASE/server/login_server/
+     game_server folder contents  -> $BASE/server/game_server/
    Archives (.zip/.rar/.7z) can be extracted with:  talisman unpack <file>
 
-2. Upload your SQL dumps (db_account.sql, db_game.sql, db_log.sql) into:
-     $BASE/sql
+2. Upload your database files into $BASE/sql/
+     db_account.sql, db_game.sql, db_log.sql (db_gmtool.sql optional)
    Then import them:  talisman import
 
 3. Put the database login into your server config files:
@@ -1582,8 +1584,12 @@ ${C_GRN}${C_B}==================================================
  Setup log        : $BASE/logs/setup.log
 
 ${C_B} Next steps:${C_0}
-  1) Upload server files  ->  $BASE/server
-  2) Upload SQL dumps     ->  $BASE/sql      then run:  talisman import
+  1) Upload with Bitvise (New SFTP window):
+       db_server    ->  $BASE/server/db_server/
+       login_server ->  $BASE/server/login_server/
+       game_server  ->  $BASE/server/game_server/
+  2) Upload db_account.sql, db_game.sql, db_log.sql  ->  $BASE/sql/
+     then run:  talisman import
   3) Edit server configs  ->  talisman passwords  +  talisman find-config
   4) Start                ->  talisman start
   5) Check                ->  talisman status   /   talisman doctor

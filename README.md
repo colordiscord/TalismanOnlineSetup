@@ -55,11 +55,33 @@ You can run the script **again at any time**. It repairs what's missing and
 |---|---|
 | **A VPS** | OVH (or any provider). **Ubuntu 22.04 or 24.04**, at least **2 GB RAM** and **20 GB disk** |
 | **The VPS IP address** | In the OVH email or the OVH Control Panel, e.g. `51.xx.xx.xx` |
-| **The root password** | The one you set (see step 3.1) |
-| **A terminal program** (to type commands) | Windows 10/11: **PowerShell** or **Windows Terminal** (already installed). Or [PuTTY](https://www.putty.org/) |
-| **A file upload program** | [WinSCP](https://winscp.net/) (easiest on Windows) or [FileZilla](https://filezilla-project.org/) |
-| **Your Talisman server files** | The server programs (`db_server`, `login_server`, `game_server` or similar), their config files and any `lib` folder |
-| **Your database files** | `db_account.sql`, `db_game.sql`, `db_log.sql` (and `db_gmtool.sql` if you have it) |
+| **The root password** | The one you set (see step 3.2) |
+| **Bitvise SSH Client** (free) | One program for both **typing commands** (terminal) and **uploading files** (SFTP). Download: <https://www.bitvise.com/ssh-client-download> |
+| **Your 3 server folders** | `db_server`, `login_server`, `game_server`, each with its program, config files and any `lib` folder |
+| **Your 3 database files** | `db_account.sql`, `db_game.sql`, `db_log.sql` (plus `db_gmtool.sql` if you have it) |
+
+Your files on your PC should look something like this:
+
+```
+My Talisman Server\
+├── db_server\            <- folder
+│   ├── db_server         <- the program (no .exe, it's a Linux program)
+│   └── config files...   (.ini / .cfg / .xml ...)
+├── login_server\
+│   ├── login_server
+│   └── config files...
+├── game_server\
+│   ├── game_server
+│   ├── config files...
+│   └── data folders...   (maps, scripts, etc.)
+└── database\
+    ├── db_account.sql
+    ├── db_game.sql
+    └── db_log.sql
+```
+
+> The program names don't have to match exactly. `DBServer`, `LoginServer`,
+> `GameServer`, `dbserver`, ... are found too (see [Troubleshooting](#6-troubleshooting) if yours isn't).
 
 ---
 
@@ -73,53 +95,52 @@ You can run the script **again at any time**. It repairs what's missing and
 3. OVH emails you a login. On Ubuntu this is usually the user **`ubuntu`**,
    not `root`.
 
-### 3.2 Log in and activate root
+### 3.2 Connect with Bitvise and activate root
 
-> Already set a root password, activated root, and can log in as `root`?
-> **Skip to 3.3.**
+**Install Bitvise SSH Client** on your PC (download link in section 2, click Next → Next → Install).
 
-Open **PowerShell** on your PC and type (use your VPS IP):
+Open **Bitvise SSH Client**. On the **Login** tab fill in:
 
-```bash
-ssh ubuntu@51.xx.xx.xx
-```
+| Field | Value |
+|---|---|
+| Host | your VPS IP (`51.xx.xx.xx`) |
+| Port | **22** |
+| Username | **root** (or **ubuntu** if you haven't activated root yet) |
+| Initial method | **password** |
+| Password | your password (tick **Store encrypted password** so you don't have to retype it) |
 
-- The first time it asks `Are you sure you want to continue connecting?`: type `yes` and press Enter.
-- Type the password from the OVH email. **Nothing appears on screen while you type the password.** That's normal. Press Enter.
+Click **Log in**. The first time, a window about the **host key** appears: click **Accept and Save**.
 
-Now set a root password and allow root to log in. Copy/paste these lines one by one:
+After logging in, Bitvise shows buttons on the left:
+- **New terminal console**: the black window where you **type commands**
+- **New SFTP window**: where you **upload files** (left side = your PC, right side = the VPS)
+
+> **Already activated root and logged in as `root`?** **Skip to 3.3.**
+
+**Activating root** (only if you logged in as `ubuntu`): open **New terminal console** and paste these lines one by one (right-click pastes in the Bitvise terminal):
 
 ```bash
 sudo passwd root
 ```
-Type a **strong** new password twice (again, nothing shows while typing).
+Type a **strong** new password twice. **Nothing appears on screen while you type a password.** That's normal.
 
 ```bash
 sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null
 sudo systemctl restart ssh
-exit
 ```
 
-Now log in as root:
+Click **Log out** in Bitvise, change **Username** to **root**, enter the new root password, and click **Log in** again.
 
-```bash
-ssh root@51.xx.xx.xx
-```
-
-You're in the right place when the line in front of the cursor looks like this:
+You're in the right place when the terminal line looks like this:
 
 ```
 root@vps-xxxxxxxx:~#
 ```
 
-> **Tip:** Don't want to enable root? Log in as `ubuntu` and type `sudo -i`.
-> That also makes you root. For uploading files later you'd then have to use
-> `/home/ubuntu` and move the files, so enabling root is easier.
-
 ### 3.3 Download and run the setup
 
-You're logged in as root. Copy/paste these two lines:
+In the Bitvise **terminal console** (logged in as root), paste these two lines:
 
 ```bash
 cd /root
@@ -130,8 +151,9 @@ curl -fsSL https://raw.githubusercontent.com/colordiscord/TalismanOnlineSetup/ma
 <summary><b>Got an error like "404" or "Could not resolve"? Upload the file by hand instead</b></summary>
 
 1. On GitHub, open `talisman_setup.sh` and click the **download** button (or "Raw" → Save as).
-2. Upload it to `/root` on the VPS with WinSCP (see step 3.4 for how to connect).
-3. Continue below.
+2. In Bitvise, open **New SFTP window**. On the right side (the VPS) go to `/root`.
+3. Drag `talisman_setup.sh` from the left side (your PC) to the right side.
+4. Continue below.
 
 </details>
 
@@ -145,39 +167,74 @@ bash talisman_setup.sh
 - When it's finished you see a big **`SETUP COMPLETE`**.
 - If it stops with **ERROR**, read the message: it says what to do. After fixing, just run `bash talisman_setup.sh` again.
 
-### 3.4 Upload your server files and databases
+The setup creates these **empty folders** for your files:
 
-Open **WinSCP** on your PC and make a new connection:
+```
+/root/talisman/
+├── server/
+│   ├── db_server/        <- upload your db_server folder's contents here
+│   ├── login_server/     <- upload your login_server folder's contents here
+│   └── game_server/      <- upload your game_server folder's contents here
+├── sql/                  <- upload db_account.sql, db_game.sql, db_log.sql here
+└── lib/                  <- extra .so library files (only if you have them)
+```
 
-| Field | Value |
+### 3.4 Upload your server files and databases (Bitvise SFTP)
+
+In Bitvise, click **New SFTP window**.
+
+- **Left side** = your PC. Go to your Talisman server folder.
+- **Right side** = the VPS. Type `/root/talisman/server` in the path box at the top and press Enter.
+
+Upload by **dragging from left to right** (or select and click **Upload**):
+
+| From your PC | To the VPS (right side) |
 |---|---|
-| File protocol | **SFTP** |
-| Host name | your VPS IP (`51.xx.xx.xx`) |
-| Port | **22** |
-| User name | **root** |
-| Password | your root password |
+| Everything **inside** your `db_server` folder | `/root/talisman/server/db_server/` |
+| Everything **inside** your `login_server` folder | `/root/talisman/server/login_server/` |
+| Everything **inside** your `game_server` folder | `/root/talisman/server/game_server/` |
+| `db_account.sql`, `db_game.sql`, `db_log.sql` (and `db_gmtool.sql`) | `/root/talisman/sql/` |
+| Extra `.so` library files (if your pack has a separate `lib` folder) | `/root/talisman/lib/` |
 
-Click **Login**. The right side is the VPS, the left side is your PC. Drag the files over:
+When you're done it should look like this on the VPS:
 
-| What | Put it in |
-|---|---|
-| Server programs + configs (db / login / game folders) | `/root/talisman/server/` |
-| Database files (`.sql` or `.sql.gz`) | `/root/talisman/sql/` |
-| Extra library files (`.so`), if you have them | `/root/talisman/lib/` |
+```
+/root/talisman/server/db_server/db_server          <- program
+/root/talisman/server/db_server/...config files
+/root/talisman/server/login_server/login_server    <- program
+/root/talisman/server/login_server/...config files
+/root/talisman/server/game_server/game_server      <- program
+/root/talisman/server/game_server/...config + data
+/root/talisman/sql/db_account.sql
+/root/talisman/sql/db_game.sql
+/root/talisman/sql/db_log.sql
+```
 
-**Is your server pack a `.zip`, `.rar` or `.7z` file?** Upload it to `/root`, then in PowerShell (still logged in as root) type:
+> **Uploaded a whole folder by accident** (e.g. `server/db_server/db_server/db_server`)?
+> No problem: the programs are found anywhere inside `/root/talisman`.
+
+**Is your server pack one `.zip`, `.rar` or `.7z` file?** Upload it to `/root`, then in the Bitvise **terminal** type:
 
 ```bash
 talisman unpack /root/YourServerPack.zip
 ```
 
-Check that everything was found:
+**Check that everything was found.** In the Bitvise **terminal** type:
 
 ```bash
 talisman scan
 ```
 
-You should see **OK** for DB server, Login server, Game server and your SQL files.
+You should see **OK** for DB server, Login server, Game server and each SQL file, like this:
+
+```
+  OK   DB server     /root/talisman/server/db_server/db_server (ELF 32-bit ...)
+  OK   Login server  /root/talisman/server/login_server/login_server (ELF 32-bit ...)
+  OK   Game server   /root/talisman/server/game_server/game_server (ELF 32-bit ...)
+  OK   SQL file      /root/talisman/sql/db_account.sql -> db_account
+  OK   SQL file      /root/talisman/sql/db_game.sql -> db_game
+  OK   SQL file      /root/talisman/sql/db_log.sql -> db_log
+```
 
 ### 3.5 Import the databases
 
@@ -218,8 +275,10 @@ talisman find-config
 Open a file to edit (use the path that `find-config` showed you):
 
 ```bash
-nano /root/talisman/server/Game/config.ini
+nano /root/talisman/server/game_server/config.ini
 ```
+
+> Prefer editing on your PC? In the Bitvise **SFTP window**, right-click the file on the right side → **Edit**, or download it, edit it with Notepad++, and upload it back.
 
 - Move with the arrow keys and change the values.
 - **Save:** `Ctrl + O`, then `Enter`. **Exit:** `Ctrl + X`.
@@ -276,7 +335,7 @@ Players' game clients must connect to **your VPS IP**.
 
 ## 4. Everyday commands
 
-Log in (`ssh root@your-ip`) and type:
+Log in with Bitvise as root, open **New terminal console**, and type:
 
 | Command | What it does |
 |---|---|
@@ -305,8 +364,11 @@ The short commands from the old script still work: `cd /root` then `./1`, `./2`,
 
 ```
 /root/talisman/
-├── server/            your server files (upload here)
-├── sql/               your .sql database files (upload here)
+├── server/
+│   ├── db_server/     your db_server files
+│   ├── login_server/  your login_server files
+│   └── game_server/   your game_server files
+├── sql/               db_account.sql, db_game.sql, db_log.sql
 ├── lib/               extra .so library files
 ├── logs/              db_server.log, login_server.log, game_server.log, setup.log
 ├── backup/            daily database backups (kept 14 days)
@@ -339,11 +401,11 @@ and prints a `->` hint with the fix for each problem.
 | `Can't connect to local MySQL server through socket` | Run `bash talisman_setup.sh` again, or use `127.0.0.1` instead of `localhost` in the config |
 | `Table 'db_game.Player' doesn't exist` (upper/lower case) | New installs ignore upper/lower case in table names. Older installs: re-import after `--reset-mysql` |
 | Players can't connect | 1) `talisman status`: are all 3 running? Which ports? 2) `talisman firewall open <port>` for each game port. 3) Check the **OVH Network Firewall** (step 3.8). 4) The server configs and the game client must use your **VPS public IP** |
-| `program not found` although you uploaded it | Its file name is different. Set the full path in `/root/talisman/talisman.conf`, e.g. `GAME_SERVER_BIN=/root/talisman/server/Game/MyGameSrv`, then `talisman start` |
+| `program not found` although you uploaded it | Its file name is different. Set the full path in `/root/talisman/talisman.conf`, e.g. `GAME_SERVER_BIN=/root/talisman/server/game_server/MyGameSrv`, then `talisman start` |
 | MySQL keeps stopping | Usually too little RAM. Check `talisman logs mysql` |
 | `Could not get lock /var/lib/dpkg/lock` | Ubuntu is updating in the background. The setup waits automatically; just wait |
 | `Permission denied` / `Please run as root` | You're not root. Type `sudo -i` first |
-| You closed PowerShell. Did the server stop? | No. The servers keep running without you. Log in again any time |
+| You closed Bitvise. Did the server stop? | No. The servers keep running without you. Log in again any time |
 
 ---
 
