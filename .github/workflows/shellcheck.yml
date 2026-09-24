@@ -1,0 +1,19 @@
+name: shellcheck
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax check
+        run: bash -n talisman_setup.sh
+      - name: Extract the embedded talisman command
+        run: |
+          sed -n "/<<'__TALISMAN_MANAGER_EOF__'/,/^__TALISMAN_MANAGER_EOF__$/p" talisman_setup.sh | sed '1d;$d' > talisman-manager.sh
+          bash -n talisman-manager.sh
+      - name: ShellCheck
+        run: shellcheck -S warning talisman_setup.sh talisman-manager.sh
