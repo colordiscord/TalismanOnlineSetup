@@ -125,7 +125,7 @@ sudo passwd root
 Type a **strong** new password twice. **Nothing appears on screen while you type a password.** That's normal.
 
 ```bash
-sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null
 sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null
 sudo systemctl restart ssh
 ```
@@ -251,11 +251,23 @@ Each file is put into the right database based on its name:
 | `log` | `db_log` |
 | `gmtool` | `db_gmtool` |
 
-It's safe to run twice: databases that already have tables are skipped.
+Good to know:
+
+- Files in `/root/talisman/sql` are used first. Only if that folder is empty does it search the whole `/root/talisman` folder.
+- A dump split into parts (`db_game_1.sql`, `db_game_2.sql`, …) is imported part by part, in order.
+- It's safe to run twice: a database that **already has tables is skipped**.
+- A name with `login` in it is never guessed (it contains "log" but is usually not `db_log`).
+
 If a file has a strange name, tell it where to go:
 
 ```bash
 talisman import /root/talisman/sql/myfile.sql db_game
+```
+
+To import into a database that already has tables (tables with the same name are replaced), add `--force`:
+
+```bash
+talisman import --force /root/talisman/sql/db_game.sql db_game
 ```
 
 ### 3.6 Connect your server configs to the database
@@ -378,6 +390,15 @@ The short commands from the old script still work: `cd /root` then `./1`, `./2`,
 ```
 
 Change settings with `nano /root/talisman/talisman.conf`, then `talisman restart`.
+A few settings need something else:
+
+| Setting | How to apply it |
+|---|---|
+| `PUBLIC_PORTS` | `talisman firewall sync` |
+| `AUTOSTART` | `talisman autostart on` or `talisman autostart off` |
+| `MYSQL_PORT`, `MYSQL_LOWER_CASE_TABLE_NAMES` | run the setup again (`talisman self-update`) |
+
+If you ever edit `mysql.env` by hand, keep passwords in single quotes: `MYSQL_ROOT_PASSWORD='my pass$word'`.
 
 ---
 
@@ -414,7 +435,7 @@ and prints a `->` hint with the fix for each problem.
 | Goal | Command |
 |---|---|
 | Get the newest version of this setup | `talisman self-update` |
-| Repair / re-apply the setup (safe, keeps data) | `bash /root/talisman_setup.sh` |
+| Repair / re-apply the setup (safe, keeps data) | `talisman self-update` (always uses the newest version) |
 | Start the database from zero (**deletes all accounts and characters!**) | `bash /root/talisman_setup.sh --reset-mysql` |
 | Remove everything except your data | `talisman uninstall` |
 | Remove everything **including** data and files | `talisman uninstall --purge` |

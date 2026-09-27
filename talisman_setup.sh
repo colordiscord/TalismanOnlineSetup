@@ -245,11 +245,11 @@ REQUIRED_PKGS=(
 )
 # Extra 32/64-bit libraries that some Talisman server builds need.
 OPTIONAL_PKGS=(
-  git htop "unrar|unrar-free"
+  git htop "unrar|unrar-free" "7zip-rar|p7zip-rar"
   "libncurses6:i386" "libncurses5:i386" "libtinfo5:i386"
-  "libssl3:i386|libssl1.1:i386"
+  "libssl3t64:i386|libssl3:i386|libssl1.1:i386"
   "libmysqlclient21:i386|libmysqlclient20:i386" "libmariadb3:i386"
-  "libstdc++5:i386" "libcurl4:i386" "libxml2:i386"
+  "libstdc++5:i386" "libcurl4t64:i386|libcurl4:i386" "libxml2:i386"
 )
 install_groups required "${REQUIRED_PKGS[@]}"
 ok "Base tools and 32-bit libraries installed"
@@ -324,6 +324,8 @@ if [[ ! -s "$CONF_FILE" ]]; then
 # =============================================================
 #  Talisman server settings. Edit with:  nano /root/talisman/talisman.conf
 #  After editing, run:  talisman restart
+#  (MYSQL_PORT / MYSQL_LOWER_CASE_TABLE_NAMES: re-run the setup instead.
+#   PUBLIC_PORTS: run 'talisman firewall sync'. AUTOSTART: 'talisman autostart on|off')
 # =============================================================
 EOF
 fi
@@ -355,6 +357,7 @@ conf_default START_DELAY "5" "Seconds to wait between starting db -> login -> ga
 conf_default AUTOSTART "yes" "Start the servers automatically after a reboot (yes/no)"
 conf_default BACKUP_KEEP_DAYS "14" "Daily database backups are kept this many days"
 conf_default REPO_RAW_URL "$REPO_RAW_URL" "Where 'talisman self-update' downloads the latest setup from"
+sed -i 's/\r$//' "$CONF_FILE"   # edited on Windows? remove the invisible \r characters
 # shellcheck disable=SC1090
 source "$CONF_FILE"
 ok "Settings file: $CONF_FILE"
@@ -375,7 +378,8 @@ if [[ $OPT_RESET_MYSQL -eq 1 ]]; then
       source "$ENV_FILE"
       LAST_BACKUP="$BASE/backup/before-reset-$(date +%Y%m%d-%H%M%S).sql.gz"
       if docker exec -e MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-}" "$MYSQL_CONTAINER" \
-           mysqldump -uroot -h127.0.0.1 --all-databases --single-transaction 2>/dev/null \
+           mysqldump -uroot -h127.0.0.1 --single-transaction --routines --triggers \
+           --databases db_account db_game db_log db_gmtool 2>/dev/null \
            | gzip > "$LAST_BACKUP.part"; then
         mv "$LAST_BACKUP.part" "$LAST_BACKUP"
         ok "Last backup saved: $LAST_BACKUP"
@@ -415,6 +419,7 @@ else
   ok "Using existing passwords from $ENV_FILE"
 fi
 chmod 600 "$ENV_FILE"
+sed -i 's/\r$//' "$ENV_FILE"
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 : "${MYSQL_ROOT_PASSWORD:?missing in $ENV_FILE}"
@@ -511,7 +516,8 @@ if [[ $READY -ne 1 ]]; then
     die "MySQL is running but refuses the root password in $ENV_FILE ('Access denied').
        This happens when the database was created by an earlier install with a different password.
        If you have NO data to keep, fix it with:   bash $0 --reset-mysql
-       If you DO have data, put the old root password into $ENV_FILE and run this setup again."
+       If you DO have data, put the old root password into $ENV_FILE (keep the single quotes:
+       MYSQL_ROOT_PASSWORD='old-password') and run this setup again."
   fi
   echo; docker logs --tail 40 "$MYSQL_CONTAINER" 2>&1 | sed 's/^/     /'
   die "MySQL did not become ready in 5 minutes. See the log lines above."
@@ -547,7 +553,9 @@ ok "MySQL user '$MYSQL_APP_USER' can log in"
 # ----------------------------------------------------------------------------
 step "Installing the 'talisman' command..."
 # ----------------------------------------------------------------------------
-cat > "$MANAGER" <<'__TALISMAN_MANAGER_EOF__'
+# Written to a new file and moved into place, so a running "talisman self-update"
+# is never overwritten underneath itself.
+cat > "$MANAGER.new" <<'__TALISMAN_MANAGER_EOF__'
 #!/usr/bin/env bash
 # =============================================================================
 #  talisman - manage your Talisman Online server.   Run "talisman help".
@@ -560,7 +568,7 @@ CONF_FILE="$BASE/talisman.conf"
 ENV_FILE="$BASE/mysql.env"
 
 # shellcheck disable=SC1090
-[[ -f "$CONF_FILE" ]] && source "$CONF_FILE"
+[[ -f "$CONF_FILE" ]] && source <(sed 's/\r$//' "$CONF_FILE")   # tolerate Windows line endings
 : "${MYSQL_CONTAINER:=talisman-mysql}"
 : "${MYSQL_VOLUME:=talisman_mysql}"
 : "${MYSQL_PORT:=3306}"
@@ -603,8 +611,14 @@ confirm() {
 load_env() {
   [[ -f "$ENV_FILE" ]] || die "$ENV_FILE not found. Run the setup first: bash talisman_setup.sh"
   # shellcheck disable=SC1090
-  source "$ENV_FILE"
+  source <(sed 's/\r$//' "$ENV_FILE")
   : "${MYSQL_APP_USER:=talisman}"
+}
+set_env_var() {  # set_env_var KEY VALUE  - rewrite one line of mysql.env safely
+  local tmp; tmp="$(mktemp)"
+  grep -v "^$1=" "$ENV_FILE" > "$tmp" || true
+  printf '%s=%q\n' "$1" "$2" >> "$tmp"
+  cat "$tmp" > "$ENV_FILE"; rm -f "$tmp"
 }
 
 # ---------------------------------------------------------------- MySQL -----
@@ -614,7 +628,7 @@ mysql_root() {  # mysql_root [mysql args...]  (stdin is passed through)
     mysql -uroot -h127.0.0.1 --max-allowed-packet=256M "$@"
 }
 mysql_running() { [[ "$(docker inspect -f '{{.State.Running}}' "$MYSQL_CONTAINER" 2>/dev/null)" == "true" ]]; }
-mysql_ok() { mysql_running && mysql_root -N -e "SELECT 1" >/dev/null 2>&1; }
+mysql_ok() { [[ -f "$ENV_FILE" ]] && mysql_running && mysql_root -N -e "SELECT 1" >/dev/null 2>&1; }
 
 wait_mysql() {
   mysql_running || docker start "$MYSQL_CONTAINER" >/dev/null 2>&1 || true
@@ -711,6 +725,11 @@ cmd_run() {
 }
 
 service_active() { systemctl is-active --quiet "$(role_unit "$1")"; }
+# Also true while systemd is restarting a crashed server (state "activating").
+service_up() {
+  local s; s="$(systemctl show -p ActiveState --value "$(role_unit "$1")" 2>/dev/null || true)"
+  [[ -n "$s" && "$s" != "inactive" && "$s" != "failed" ]]
+}
 service_pid() { systemctl show -p MainPID --value "$(role_unit "$1")" 2>/dev/null || echo 0; }
 
 listening_ports() {  # listening_ports PID -> "9002 8885"
@@ -793,7 +812,7 @@ cmd_stop() {
   title "Stopping Talisman..."
   for role in "${targets[@]}"; do
     role="$(norm_role "$role")"
-    if service_active "$role"; then
+    if service_up "$role"; then
       systemctl stop "$(role_unit "$role")"
       ok "$(role_label "$role") stopped"
     else
@@ -813,7 +832,7 @@ cmd_restart() {
 }
 
 public_ip() {
-  ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}'
+  { ip -4 route get 1.1.1.1 2>/dev/null || true; } | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}'
 }
 
 cmd_status() {
@@ -862,10 +881,10 @@ cmd_console() {
   local role; role="$(norm_role "${1:-}")"
   local bin; bin="$(find_binary "$role")"
   [[ -n "$bin" ]] || die "$(role_label "$role") program not found under $BASE"
-  if service_active "$role"; then
+  if service_up "$role"; then
     info "Stopping the background $(role_label "$role") first..."
-    systemctl stop "$(role_unit "$role")"
   fi
+  systemctl stop "$(role_unit "$role")" 2>/dev/null || true
   echo "Running $(role_label "$role") in the foreground. Press Ctrl+C to stop."
   echo "Afterwards start it normally again with: talisman start $role"
   echo
@@ -889,9 +908,15 @@ db_for_file() {  # guess the database from a file name
   esac
 }
 
-find_sql_files() {
-  find "$BASE" -maxdepth 6 \( -path "$BASE/backup" -o -path "$BASE/logs" \) -prune \
-    -o -type f \( -iname '*.sql' -o -iname '*.sql.gz' \) -print 2>/dev/null | sort
+find_sql_files() {  # dumps in $BASE/sql win; only if it is empty, search everything else
+  local found
+  found="$(find "$BASE/sql" -maxdepth 3 -type f \( -iname '*.sql' -o -iname '*.sql.gz' \) 2>/dev/null | sort -V || true)"
+  if [[ -z "$found" ]]; then
+    found="$(find "$BASE" -maxdepth 6 \( -path "$BASE/backup" -o -path "$BASE/logs" \) -prune \
+      -o -type f \( -iname '*.sql' -o -iname '*.sql.gz' \) -print 2>/dev/null | sort -V || true)"
+  fi
+  [[ -n "$found" ]] && printf '%s\n' "$found"
+  return 0
 }
 
 import_file() {  # import_file FILE DB FORCE
@@ -947,6 +972,10 @@ cmd_import() {
     hint "Zip/rar/7z archive? Run: talisman unpack /path/to/file.zip"
     return 1
   fi
+  # Decide once which databases are empty, so split dumps (db_game_1.sql, db_game_2.sql ...)
+  # all go in, and a database that already has data is never touched without --force.
+  local -A was_empty=() seen=()
+  for db in "${DATABASES[@]}"; do [[ "$(table_count "$db")" == "0" ]] && was_empty[$db]=1; done
   for f in "${files[@]}"; do
     db="$(db_for_file "$f")"
     if [[ -z "$db" ]]; then
@@ -954,7 +983,10 @@ cmd_import() {
       hint "Import it by hand: talisman import \"$f\" db_game   (or db_account / db_log / db_gmtool)"
       continue
     fi
-    if import_file "$f" "$db" "$force"; then found=1; else failed=$((failed + 1)); fi
+    [[ -n "${seen[$db]:-}" ]] && info "More than one file for $db - importing $(basename "$f") too (in name order)"
+    seen[$db]=1
+    local use_force="$force"; [[ -n "${was_empty[$db]:-}" ]] && use_force=1
+    if import_file "$f" "$db" "$use_force"; then found=1; else failed=$((failed + 1)); fi
   done
   echo
   if [[ $failed -gt 0 ]]; then
@@ -1003,15 +1035,17 @@ cmd_restore() {
   confirm "Continue?" || die "Cancelled."
   wait_mysql || die "MySQL is not reachable."
   local was_running=0 r
-  for r in "${ROLES[@]}"; do service_active "$r" && was_running=1; done
-  [[ $was_running -eq 1 ]] && cmd_stop
+  for r in "${ROLES[@]}"; do service_up "$r" && was_running=1; done
   info "Saving a safety backup of the current data first..."
-  cmd_backup
+  ( cmd_backup ) || die "Safety backup failed - nothing was changed."
+  [[ $was_running -eq 1 ]] && cmd_stop
   info "Restoring..."
-  if [[ "$file" == *.gz ]]; then gzip -dc "$file" | mysql_root; else mysql_root < "$file"; fi
-  ok "Restore finished"
+  local rc=0
+  if [[ "$file" == *.gz ]]; then gzip -dc "$file" | mysql_root || rc=$?; else mysql_root < "$file" || rc=$?; fi
+  if [[ $rc -eq 0 ]]; then ok "Restore finished"
+  else bad "Restore failed (see the MySQL error above). Your data from before is in the newest file in $BASE/backup"; fi
   [[ $was_running -eq 1 ]] && cmd_start
-  return 0
+  return "$rc"
 }
 
 # ------------------------------------------------------------- utilities ----
@@ -1043,15 +1077,16 @@ cmd_db_user() {
   local p; p="$(sql_escape "$pass")"
   if [[ "$user" == "root" ]]; then
     mysql_root -e "ALTER USER 'root'@'%' IDENTIFIED BY '$p'; ALTER USER 'root'@'localhost' IDENTIFIED BY '$p'; FLUSH PRIVILEGES;"
-    local tmp; tmp="$(mktemp)"
-    grep -v '^MYSQL_ROOT_PASSWORD=' "$ENV_FILE" > "$tmp"
-    printf 'MYSQL_ROOT_PASSWORD=%q\n' "$pass" >> "$tmp"
-    cat "$tmp" > "$ENV_FILE"; rm -f "$tmp"
+    set_env_var MYSQL_ROOT_PASSWORD "$pass"
     ok "Root password changed (saved in $ENV_FILE)"
   else
     local sql="CREATE USER IF NOT EXISTS '$user'@'%' IDENTIFIED BY '$p'; ALTER USER '$user'@'%' IDENTIFIED BY '$p';" db
     for db in "${DATABASES[@]}"; do sql+=" GRANT ALL PRIVILEGES ON \`$db\`.* TO '$user'@'%';"; done
     mysql_root -e "$sql FLUSH PRIVILEGES;"
+    if [[ "$user" == "$MYSQL_APP_USER" ]]; then
+      set_env_var MYSQL_APP_PASSWORD "$pass"
+      info "Saved the new password in $ENV_FILE"
+    fi
     ok "MySQL user '$user' can now use ${DATABASES[*]} with the given password"
   fi
 }
@@ -1074,15 +1109,18 @@ cmd_unpack() {
     *.tar)                  tar -xf "$file" -C "$dest" ;;
     *.sql.gz)               cp "$file" "$BASE/sql/" ;;
     *.rar|*.7z)
-      if command -v 7z >/dev/null; then 7z x -y -o"$dest" "$file" >/dev/null
-      elif command -v 7zz >/dev/null; then 7zz x -y -o"$dest" "$file" >/dev/null
-      elif command -v unrar >/dev/null; then unrar x -o+ "$file" "$dest/" >/dev/null
-      else die "No 7z/unrar tool installed."; fi ;;
+      local ok_x=0
+      if [[ "${file,,}" == *.rar ]] && command -v unrar >/dev/null; then
+        unrar x -o+ "$file" "$dest/" >/dev/null && ok_x=1
+      fi
+      if [[ $ok_x -eq 0 ]] && command -v 7z >/dev/null; then 7z x -y -o"$dest" "$file" >/dev/null && ok_x=1; fi
+      if [[ $ok_x -eq 0 ]] && command -v 7zz >/dev/null; then 7zz x -y -o"$dest" "$file" >/dev/null && ok_x=1; fi
+      [[ $ok_x -eq 1 ]] || die "Could not extract $(basename "$file"). For .rar run: apt-get install unrar   (or re-pack it as .zip)" ;;
     *) die "Unknown archive type: $file" ;;
   esac
   ok "Extracted"
   # Windows zips lose the "executable" flag; fix it on real programs.
-  find "$dest" -type f -size +10k -print0 2>/dev/null | while IFS= read -r -d '' f; do is_elf "$f" && chmod +x "$f"; done
+  find "$dest" -type f -size +10k -print0 2>/dev/null | while IFS= read -r -d '' f; do if is_elf "$f"; then chmod +x "$f"; fi; done
   cmd_scan
 }
 
@@ -1157,7 +1195,9 @@ missing_lib_hint() {
     libstdc++.so.5)  hint "Install it: apt-get install libstdc++5:i386   (or copy libstdc++.so.5 into $BASE/lib)" ;;
     libstdc++.so.6)  hint "Install it: apt-get install libstdc++6:i386" ;;
     libz.so.1)       hint "Install it: apt-get install zlib1g:i386" ;;
-    libncurses.so.5|libtinfo.so.5) hint "Install it: apt-get install libncurses5:i386 libtinfo5:i386  (or copy it into $BASE/lib)" ;;
+    libncurses.so.5|libtinfo.so.5)
+      hint "Install it: apt-get install libncurses5:i386 libtinfo5:i386"
+      hint "(Ubuntu 24.04 no longer has these - copy $1 from your server pack into $BASE/lib)" ;;
     libssl.so.*|libcrypto.so.*) hint "Old OpenSSL library. Copy it from your server pack into $BASE/lib" ;;
     *) hint "Copy $1 (from your server pack or an older Linux) into $BASE/lib" ;;
   esac
@@ -1219,7 +1259,8 @@ cmd_doctor() {
     ok "$(role_label "$role"): $bin"
     info "type: $(file -b "$bin" | cut -d, -f1-2)"
     [[ -x "$bin" ]] || { chmod +x "$bin"; info "made it executable"; }
-    if ldd "$bin" 2>&1 | grep -q 'not a dynamic executable'; then
+    local ldd_out; ldd_out="$(ldd "$bin" 2>&1 || true)"
+    if [[ "$ldd_out" == *"not a dynamic executable"* ]]; then
       if file -b "$bin" | grep -q '32-bit'; then
         bad "32-bit program but 32-bit system libraries are missing"; hint "apt-get install libc6:i386 libstdc++6:i386"; problems=$((problems+1))
       fi
@@ -1286,8 +1327,8 @@ cmd_self_update() {
   info "Downloading latest setup from $REPO_RAW_URL ..."
   curl -fsSL "$REPO_RAW_URL/talisman_setup.sh" -o "$tmp" || die "Download failed."
   bash -n "$tmp" || die "Downloaded file is broken, not running it."
-  bash "$tmp" --yes --no-import
-  rm -f "$tmp"
+  # exec: this running script is replaced, so the update can safely rewrite it.
+  exec bash "$tmp" --yes --no-import
 }
 
 cmd_uninstall() {
@@ -1383,8 +1424,11 @@ main() {
 }
 main "$@"
 __TALISMAN_MANAGER_EOF__
-chmod 755 "$MANAGER"
-bash -n "$MANAGER" || die "Internal error: the talisman command has a syntax error."
+# Remember the install folder, so a custom TALISMAN_BASE keeps working after setup.
+sed -i "s#^BASE=\"\${TALISMAN_BASE:-/root/talisman}\"#BASE=\"\${TALISMAN_BASE:-$BASE}\"#" "$MANAGER.new"
+chmod 755 "$MANAGER.new"
+bash -n "$MANAGER.new" || die "Internal error: the talisman command has a syntax error."
+mv -f "$MANAGER.new" "$MANAGER"
 ln -sf "$MANAGER" "$BASE/talisman"
 ok "Installed: talisman   (run 'talisman help')"
 
@@ -1483,7 +1527,8 @@ for role in login game; do
   mkdir -p "/etc/systemd/system/talisman-$role.service.d"
   cat > "/etc/systemd/system/talisman-$role.service.d/delay.conf" <<EOF
 [Service]
-ExecStartPre=/bin/sleep ${START_DELAY:-5}
+# START_DELAY is read from talisman.conf every time, so edits apply on the next restart.
+ExecStartPre=/bin/bash -c '. "$BASE/talisman.conf" 2>/dev/null; sleep "\$\${START_DELAY:-5}"'
 EOF
 done
 
@@ -1571,7 +1616,7 @@ EOF
 # ----------------------------------------------------------------------------
 step "Done!"
 # ----------------------------------------------------------------------------
-SERVER_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')"
+SERVER_IP="$( { ip -4 route get 1.1.1.1 2>/dev/null || true; } | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')"
 cat <<EOF
 
 ${C_GRN}${C_B}==================================================
